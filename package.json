@@ -1,0 +1,8 @@
+{
+  "name": "usb-remote-connect-workspace",
+  "version": "1.0.0",
+  "description": "Root workspace for USB Remote Connect (Signaling Server and Electron Client)",
+  "scripts": {
+    "start": "node start.js"
+  }
+}

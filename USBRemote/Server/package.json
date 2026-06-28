@@ -1,0 +1,13 @@
+{
+  "name": "usb-remote-server",
+  "version": "1.0.0",
+  "description": "Signaling and Authentication Server for USB Remote Connect",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.12.0",
+    "ws": "^8.18.0"
+  }
+}

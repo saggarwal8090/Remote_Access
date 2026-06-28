@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+dist/
+
+# Local configuration & credentials
+.env
+.usbremote/
+*.pem
+*.json
+
+# Exceptions (keep project json configs)
+!package.json
+!tsconfig.json
+!vercel.json
+!certificate.json
+
+# Simulated USB Key directories
+usb_key_a/
+usb_key_b/
+usb_demo_sender/
+usb_demo_receiver/
+usb_key_demo_sender/
+usb_key_demo_receiver/
+
+# IDE and OS logs
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
