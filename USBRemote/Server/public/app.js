@@ -17,15 +17,16 @@ let logs = [];
 let localStream = null;
 let peerConnection = null;
 let sessionActive = false;
+let incomingRequestChallenge = '';
 
 // DOM Elements
 const screens = {
-  auth: document.getElementById('screen-auth'),
-  mode: document.getElementById('screen-mode'),
-  sender: document.getElementById('screen-sender'),
-  receiver: document.getElementById('screen-receiver'),
-  session: document.getElementById('screen-session'),
-  logs: document.getElementById('screen-logs')
+  'screen-auth': document.getElementById('screen-auth'),
+  'screen-mode': document.getElementById('screen-mode'),
+  'screen-sender': document.getElementById('screen-sender'),
+  'screen-receiver': document.getElementById('screen-receiver'),
+  'screen-session': document.getElementById('screen-session'),
+  'screen-logs': document.getElementById('screen-logs')
 };
 
 const navButtons = {
@@ -174,7 +175,7 @@ function switchScreen(screenName) {
     }
   });
 
-  if (screenName === 'logs') {
+  if (screenName === 'screen-logs') {
     navButtons.logs.classList.add('active-nav');
     navButtons.mode.classList.remove('active-nav');
   } else {
@@ -588,7 +589,6 @@ document.getElementById('btn-sender-connect').addEventListener('click', () => {
 });
 
 // Receiver Accept request
-let incomingRequestChallenge = '';
 document.getElementById('btn-accept-request').addEventListener('click', async () => {
   document.getElementById('incoming-request-box').style.display = 'none';
   setPairingState('authenticating', 'Signing cryptographic challenge...');
