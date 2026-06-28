@@ -1,15 +1,24 @@
 {
   "version": 2,
+  "cleanUrls": true,
   "builds": [
     {
       "src": "api/signaling.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "public/**/*",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
       "dest": "api/signaling.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "public/$1"
     }
   ]
 }

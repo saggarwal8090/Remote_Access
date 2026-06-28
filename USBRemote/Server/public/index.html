@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>USB Remote Connect - Web Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <div class="web-app-container">
+    <!-- Header -->
+    <header class="web-header">
+      <div class="logo-wrapper">
+        <div class="logo-icon">🛡️</div>
+        <div>
+          <h1>USB REMOTE WEB CONSOLE</h1>
+          <p>MUTUAL RSA CRYPTOGRAPHIC LINK</p>
+        </div>
+      </div>
+      <div id="connection-status" class="status-badge status-disconnected">
+        <span class="status-indicator"></span>
+        <span class="status-text">DISCONNECTED</span>
+      </div>
+    </header>
+
+    <div class="web-layout">
+      <!-- Sidebar -->
+      <aside class="web-sidebar">
+        <!-- Local Identity Card -->
+        <div class="sidebar-card">
+          <span class="card-label">Browser Client Identity</span>
+          <div class="flex-align-center" style="margin-top: 5px;">
+            <span class="host-icon">💻</span>
+            <span id="local-host-id" class="host-name">Web Browser Instance</span>
+          </div>
+        </div>
+
+        <!-- Security Key Status -->
+        <div class="sidebar-card">
+          <div class="flex-space-between">
+            <span class="card-label">Security Credentials</span>
+            <button id="btn-change-cert" class="text-btn" style="display: none;">Eject</button>
+          </div>
+          
+          <div id="credential-unloaded" class="cert-status-box">
+            <span class="warning-icon">⚠️</span>
+            <div>
+              <p class="bold">Key Unloaded</p>
+              <p class="small text-muted">Upload certificate to unlock console.</p>
+            </div>
+          </div>
+
+          <div id="credential-loaded" class="cert-status-box success-box" style="display: none;">
+            <span class="success-icon">🔑</span>
+            <div style="overflow: hidden;">
+              <p id="cert-label" class="bold">Personal Key</p>
+              <p id="cert-id" class="small success-text text-truncate">ID: FFFFFFFF</p>
+            </div>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav">
+          <button id="nav-mode" class="nav-btn active-nav" disabled>Mode Selection</button>
+          <button id="nav-logs" class="nav-btn">Security Audit Log</button>
+        </nav>
+      </aside>
+
+      <!-- Main Workspace -->
+      <main class="web-workspace">
+        
+        <!-- 1. LOGIN / CREDENTIALS UPLOAD SCREEN -->
+        <section id="screen-auth" class="workspace-screen screen-active">
+          <div class="glass-panel centered-panel" style="max-width: 580px;">
+            <div class="panel-icon">🔐</div>
+            <h2>USB Security Key Verification</h2>
+            <p class="text-secondary" style="margin-bottom: 1.5rem;">
+              To initiate an encrypted link, verify your credentials. Select or drag-and-drop the key certificate files stored on your USB drive.
+            </p>
+
+            <!-- File Upload Grid -->
+            <div class="upload-grid">
+              <div id="drop-zone-cert" class="drop-zone">
+                <span class="drop-icon">📄</span>
+                <p class="bold">Certificate File</p>
+                <p class="small text-muted">Select certificate.json</p>
+                <input type="file" id="input-cert" accept=".json" style="display: none;">
+                <p id="cert-filename" class="file-badge" style="display: none;"></p>
+              </div>
+
+              <div id="drop-zone-key" class="drop-zone">
+                <span class="drop-icon">🔑</span>
+                <p class="bold">Private Key File</p>
+                <p class="small text-muted">Select key.pem</p>
+                <input type="file" id="input-key" accept=".pem" style="display: none;">
+                <p id="key-filename" class="file-badge" style="display: none;"></p>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-bottom: 1.5rem; justify-content: center;">
+              <button id="btn-authenticate" class="btn btn-primary" disabled>Unlock Web Console</button>
+            </div>
+
+            <!-- Key Creation Helper -->
+            <div class="helper-box">
+              <p class="bold">Don't have a security key?</p>
+              <p class="small text-secondary" style="margin-bottom: 10px;">
+                Generate a new certificate pair locally in your browser. Download and save the files directly onto your USB drive.
+              </p>
+              <div class="flex-align-center" style="gap: 10px;">
+                <input type="text" id="new-key-label" placeholder="e.g. Chrome Key" class="form-input" style="padding: 6px 12px; font-size: 0.85rem;">
+                <button id="btn-generate-key" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.85rem;">Generate Keypair</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. MODE SELECT SCREEN -->
+        <section id="screen-mode" class="workspace-screen">
+          <div class="glass-panel centered-panel" style="max-width: 500px;">
+            <h2>Select Operation Mode</h2>
+            <p class="text-secondary" style="margin-bottom: 2rem;">
+              Choose your role. The Sender can view and control the remote host. The Receiver will capture and stream their screen.
+            </p>
+
+            <div class="mode-grid">
+              <button id="btn-select-sender" class="mode-select-btn">
+                <span class="mode-icon">📡</span>
+                <span class="mode-title">Sender</span>
+                <span class="mode-desc">Control a remote desktop</span>
+              </button>
+
+              <button id="btn-select-receiver" class="mode-select-btn">
+                <span class="mode-icon">🖥️</span>
+                <span class="mode-title">Receiver</span>
+                <span class="mode-desc">Share this local screen</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. SENDER VIEW -->
+        <section id="screen-sender" class="workspace-screen">
+          <div class="glass-panel centered-panel" style="max-width: 420px;">
+            <div class="panel-icon">🖥️</div>
+            <h2>Secure Connection Setup</h2>
+            <p class="text-secondary" style="margin-bottom: 1.5rem;">
+              Enter the 6-digit session code generated by the receiver instance to begin pairing.
+            </p>
+
+            <div id="sender-setup-form">
+              <div class="form-group">
+                <label class="form-label">RECEIVER SECURE CODE</label>
+                <input type="text" id="input-pair-code" placeholder="e.g. 123456" class="form-input code-input" maxlength="6">
+              </div>
+              <button id="btn-sender-connect" class="btn btn-primary" style="width: 100%; padding: 12px;">Establish Secure Tunnel</button>
+            </div>
+
+            <div id="sender-pairing-status" style="display: none; padding: 20px 0;">
+              <div class="spinner"></div>
+              <h3 id="sender-pairing-title" style="margin-top: 15px; margin-bottom: 5px;">Authenticating</h3>
+              <p id="sender-pairing-desc" class="text-secondary small">Exchanging public certificates...</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. RECEIVER VIEW -->
+        <section id="screen-receiver" class="workspace-screen">
+          <div class="glass-panel centered-panel" style="max-width: 500px;">
+            <div class="panel-icon pulse-glow-icon">📡</div>
+            <h2>Awaiting Remote Peer Connection</h2>
+            <p class="text-secondary" style="margin-bottom: 1.5rem;">
+              Provide the connection code below to the sender. Both computers will execute mutual certificate handshakes.
+            </p>
+
+            <div class="secure-code-box">
+              <span class="code-label">SESSION PAIRING CODE</span>
+              <span id="display-receiver-code" class="code-number">------</span>
+            </div>
+
+            <!-- Incoming request dialog inside receiver view -->
+            <div id="incoming-request-box" class="pairing-request-alert" style="display: none;">
+              <h3>🚨 Incoming Peer Request</h3>
+              <div class="peer-details-badge">
+                <p><strong>Host:</strong> <span id="req-peer-host">Remote-PC</span></p>
+                <p class="small text-muted">Cert ID: <span id="req-peer-id">F438D992</span></p>
+              </div>
+              <div class="flex-row" style="gap: 10px; width: 100%;">
+                <button id="btn-accept-request" class="btn btn-primary" style="flex: 1;">Accept & Verify</button>
+                <button id="btn-decline-request" class="btn btn-danger" style="flex: 1;">Decline</button>
+              </div>
+            </div>
+
+            <div id="receiver-pairing-status" style="margin-top: 1.5rem;">
+              <p id="receiver-pairing-desc" class="text-secondary small">Waiting for secure discovery request...</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. ACTIVE SESSION SCREEN -->
+        <section id="screen-session" class="workspace-screen" style="max-width: 100%;">
+          <div class="session-grid">
+            <!-- Screen Sharing Canvas -->
+            <div class="glass-panel screen-panel">
+              <div class="panel-header">
+                <div class="flex-align-center" style="gap: 8px;">
+                  <span class="live-dot"></span>
+                  <span id="session-peer-name" class="bold font-small">SECURE TUNNEL ACTIVE</span>
+                </div>
+                <div class="flex-align-center" style="gap: 15px; font-size: 0.75rem; color: var(--text-secondary);">
+                  <span>Cipher: <strong class="success-text">AES-256-GCM</strong></span>
+                  <span>Handshake: <strong style="color: var(--accent-cyan)">RSA-2048</strong></span>
+                  <button id="btn-sync-clipboard" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.7rem;">Sync Clipboard</button>
+                </div>
+              </div>
+
+              <!-- Remote video stream -->
+              <div class="video-viewport">
+                <video id="remote-video" autoplay playsinline style="display: none;"></video>
+                <div id="video-placeholder" class="viewport-placeholder">
+                  <span class="placeholder-logo">🔒</span>
+                  <p class="bold">Encrypted WebRTC Channel</p>
+                  <p class="small text-secondary" style="max-width: 320px; margin: 5px auto 15px;">
+                    Peer identity verified using local certificates. Stream is established directly peer-to-peer.
+                  </p>
+                  <button id="btn-start-stream" class="btn btn-primary" style="display: none;">Share Your Screen</button>
+                </div>
+              </div>
+
+              <div class="panel-footer">
+                <span class="small text-muted">Warning: Screen capture requires system permissions. Close tab to terminate immediately.</span>
+                <button id="btn-close-session" class="btn btn-danger" style="padding: 6px 12px; font-size: 0.8rem;">Close Link</button>
+              </div>
+            </div>
+
+            <!-- Chat Sidebar -->
+            <div class="glass-panel chat-panel">
+              <h3>Secure Messaging</h3>
+              <div id="chat-messages" class="chat-message-list">
+                <div class="chat-system-message">Session encrypted end-to-end.</div>
+              </div>
+              <div class="chat-input-bar">
+                <input type="text" id="input-chat" placeholder="Type encrypted message..." class="form-input">
+                <button id="btn-send-chat" class="btn btn-primary" style="padding: 8px 12px;">Send</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. AUDIT LOG SCREEN -->
+        <section id="screen-logs" class="workspace-screen">
+          <div class="glass-panel">
+            <div class="flex-space-between" style="margin-bottom: 1rem;">
+              <h2>Security Audit logs</h2>
+              <button id="btn-clear-logs" class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;">Clear Logs</button>
+            </div>
+            <div id="web-logs-container" class="logs-viewport">
+              <!-- Logs populated dynamically -->
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
