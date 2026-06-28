@@ -15,7 +15,7 @@ export default function App() {
   const [mode, setMode] = useState('select'); // 'select', 'sender', 'receiver', 'session'
   
   // Connection Configuration
-  const [serverUrl, setServerUrl] = useState('ws://localhost:9000'); // Can be local ws or Vercel https://...
+  const [serverUrl, setServerUrl] = useState('wss://remote-access-7j7a.onrender.com'); // Deployed Render URL
   const [serverStatus, setServerStatus] = useState('disconnected');
   const [socket, setSocket] = useState(null);
   const [receiverCode, setReceiverCode] = useState(''); // Code shown on receiver or entered on sender
