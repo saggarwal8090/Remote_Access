@@ -389,7 +389,7 @@ function setPairingState(state, message = '') {
   const receiverStatus = document.getElementById('receiver-pairing-status');
   
   if (state === 'authenticating' || state === 'pairing') {
-    if (screens.sender.classList.contains('screen-active')) {
+    if (screens['screen-sender'].classList.contains('screen-active')) {
       document.getElementById('sender-setup-form').style.display = 'none';
       senderStatus.style.display = 'block';
       document.getElementById('sender-pairing-title').innerText = state.toUpperCase();
@@ -400,7 +400,7 @@ function setPairingState(state, message = '') {
     senderStatus.style.display = 'none';
   }
 
-  if (screens.receiver.classList.contains('screen-active')) {
+  if (screens['screen-receiver'].classList.contains('screen-active')) {
     document.getElementById('receiver-pairing-desc').innerText = message;
   }
 }
