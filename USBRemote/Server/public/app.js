@@ -5,18 +5,18 @@ let localCertificate = null;
 let localPrivateKeyPEM = null;
 let localPrivateKeyObj = null; // Web Crypto key object
 
-let isDemoMode = false;
 let mode = 'select'; // 'auth', 'select', 'sender', 'receiver', 'session'
 let clientId = '';
 let receiverCode = '';
 let peerComputerName = '';
 let peerCert = null;
 
-let pollInterval = null;
+let socket = null;
 let chatMessages = [];
 let logs = [];
 let localStream = null;
 let peerConnection = null;
+let sessionActive = false;
 
 // DOM Elements
 const screens = {
@@ -35,13 +35,11 @@ const navButtons = {
 
 // --- Web Crypto Helpers ---
 
-// Helper to convert ArrayBuffer to base64
 function arrayBufferToBase64(buffer) {
   const binary = String.fromCharCode(...new Uint8Array(buffer));
   return window.btoa(binary);
 }
 
-// Helper to convert base64 to ArrayBuffer
 function base64ToArrayBuffer(base64) {
   const binary = window.atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -51,23 +49,19 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
-// Helper to format key buffer to PEM string
 function arrayBufferToPEM(buffer, label) {
   const base64 = arrayBufferToBase64(buffer);
   const lines = base64.match(/.{1,64}/g) || [];
   return `-----BEGIN ${label}-----\n${lines.join('\n')}\n-----END ${label}-----`;
 }
 
-// Helper to extract clean base64 string from PEM file
 function pemToBase64(pemStr, label) {
-  const clean = pemStr
+  return pemStr
     .replace(`-----BEGIN ${label}-----`, '')
     .replace(`-----END ${label}-----`, '')
     .replace(/\s+/g, '');
-  return clean;
 }
 
-// Generate RSA-2048 key pair
 async function generateRSAKeyPair() {
   return window.crypto.subtle.generateKey(
     {
@@ -81,7 +75,6 @@ async function generateRSAKeyPair() {
   );
 }
 
-// Sign a string challenge using private key object
 async function signChallenge(challengeText, cryptoPrivateKey) {
   const encoder = new TextEncoder();
   const data = encoder.encode(challengeText);
@@ -93,7 +86,6 @@ async function signChallenge(challengeText, cryptoPrivateKey) {
   return arrayBufferToBase64(sigBuffer);
 }
 
-// Verify signature using public key PEM string
 async function verifyChallenge(challengeText, signatureBase64, publicKeyPEM) {
   try {
     const pubBase64 = pemToBase64(publicKeyPEM, 'PUBLIC KEY');
@@ -126,7 +118,6 @@ async function verifyChallenge(challengeText, signatureBase64, publicKeyPEM) {
   }
 }
 
-// Import PKCS8 private key PEM to SubtleCrypto object
 async function importPrivateKey(pemStr) {
   const cleanBase64 = pemToBase64(pemStr, 'PRIVATE KEY');
   const buffer = base64ToArrayBuffer(cleanBase64);
@@ -142,7 +133,6 @@ async function importPrivateKey(pemStr) {
   );
 }
 
-// SHA256 helper
 async function sha256(text) {
   const msgUint8 = new TextEncoder().encode(text);
   const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgUint8);
@@ -154,13 +144,12 @@ async function sha256(text) {
 function addLog(category, message) {
   const log = {
     timestamp: new Date().toISOString(),
-    category, // 'SECURITY', 'USB', 'NET', 'SESSION'
+    category,
     message
   };
   logs.push(log);
   console.log(`[${log.timestamp}] [${category}] ${message}`);
 
-  // Update DOM if visible
   const logsContainer = document.getElementById('web-logs-container');
   if (logsContainer) {
     const line = document.createElement('div');
@@ -185,7 +174,6 @@ function switchScreen(screenName) {
     }
   });
 
-  // Manage Nav states
   if (screenName === 'logs') {
     navButtons.logs.classList.add('active-nav');
     navButtons.mode.classList.remove('active-nav');
@@ -206,16 +194,13 @@ function setupDragAndDrop() {
     const badge = document.getElementById(filenameId);
 
     zone.addEventListener('click', () => input.click());
-
     zone.addEventListener('dragover', (e) => {
       e.preventDefault();
       zone.classList.add('dragover');
     });
-
     zone.addEventListener('dragleave', () => {
       zone.classList.remove('dragover');
     });
-
     zone.addEventListener('drop', (e) => {
       e.preventDefault();
       zone.classList.remove('dragover');
@@ -223,7 +208,6 @@ function setupDragAndDrop() {
         handleFile(e.dataTransfer.files[0], zone, badge, type);
       }
     });
-
     input.addEventListener('change', () => {
       if (input.files.length > 0) {
         handleFile(input.files[0], zone, badge, type);
@@ -259,7 +243,6 @@ function handleFile(file, zone, badge, type) {
       }
     }
 
-    // Toggle unlock button
     const btnUnlock = document.getElementById('btn-authenticate');
     btnUnlock.disabled = !(loadedCertObj && loadedPrivateKeyText);
   };
@@ -289,14 +272,11 @@ document.getElementById('btn-generate-key').addEventListener('click', async () =
       publicKey: publicPEM
     };
 
-    // Self-sign the metadata to match the Electron cert structure
     const metaString = JSON.stringify({ id: certificate.id, owner: certificate.owner, createdAt: certificate.createdAt });
-    // Import private key temporarily to sign
     const tempPrivKey = await importPrivateKey(privatePEM);
     const signature = await signChallenge(metaString, tempPrivKey);
     certificate.signature = signature;
 
-    // Download files
     downloadFile(JSON.stringify(certificate, null, 2), 'certificate.json');
     downloadFile(privatePEM, 'key.pem');
 
@@ -320,24 +300,21 @@ document.getElementById('btn-authenticate').addEventListener('click', async () =
   if (!loadedCertObj || !loadedPrivateKeyText) return;
 
   try {
-    // Import private key to SubtleCrypto object
     localPrivateKeyObj = await importPrivateKey(loadedPrivateKeyText);
     localPrivateKeyPEM = loadedPrivateKeyText;
     localCertificate = loadedCertObj;
 
-    // Verify keypair alignment
     const challenge = Math.random().toString(36).substring(7);
     const sig = await signChallenge(challenge, localPrivateKeyObj);
     const aligned = await verifyChallenge(challenge, sig, localCertificate.publicKey);
 
     if (!aligned) {
-      alert('Authentication failure: Private key does not correspond to the public key in certificate.json');
+      alert('Authentication failure: Private key does not correspond to certificate.json');
       return;
     }
 
     addLog('SECURITY', `Identity unlocked: ${localCertificate.label} (ID: ${localCertificate.id})`);
     
-    // Update UI status cards
     document.getElementById('credential-unloaded').style.display = 'none';
     document.getElementById('credential-loaded').style.display = 'flex';
     document.getElementById('cert-label').innerText = localCertificate.label;
@@ -345,8 +322,6 @@ document.getElementById('btn-authenticate').addEventListener('click', async () =
     document.getElementById('btn-change-cert').style.display = 'inline-block';
     
     navButtons.mode.disabled = false;
-
-    // Go to Mode select
     switchScreen('screen-mode');
   } catch (err) {
     console.error(err);
@@ -375,25 +350,23 @@ document.getElementById('btn-change-cert').addEventListener('click', () => {
   switchScreen('screen-auth');
 });
 
-// --- HTTP Polling Signaling Client ---
+// --- WebSocket Signaling Relay Setup ---
 
-function getBaseUrl() {
-  // Returns current host address (compatible with Vercel deployment)
-  return window.location.origin;
+function getWsUrl() {
+  // Automatically detects Render's WS or WSS schemes based on the host
+  const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+  return protocol + window.location.host;
 }
 
-// Clean connection states
 function cleanupConnections() {
-  if (pollInterval) {
-    clearInterval(pollInterval);
-    pollInterval = null;
+  if (socket) {
+    socket.close();
+    socket = null;
   }
-
   if (peerConnection) {
     peerConnection.close();
     peerConnection = null;
   }
-
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
@@ -431,233 +404,187 @@ function setPairingState(state, message = '') {
   }
 }
 
-// Poll API endpoint
-function startSignalingPoll() {
-  if (pollInterval) clearInterval(pollInterval);
-  
-  pollInterval = setInterval(async () => {
+// Start WebSocket connection
+function connectSignalingServer(selectedRole) {
+  cleanupConnections();
+  setPairingState('idle', 'Connecting to signaling cloud...');
+
+  const wsUrl = getWsUrl();
+  addLog('NET', `Opening socket tunnel to: ${wsUrl}`);
+
+  socket = new WebSocket(wsUrl);
+
+  socket.onopen = () => {
+    const badge = document.getElementById('connection-status');
+    badge.className = 'status-badge status-connected';
+    badge.querySelector('.status-text').innerText = 'CONNECTED';
+    
+    addLog('NET', 'Signaling connection established.');
+    setPairingState('idle', 'Registering credential signatures...');
+
+    // Register
+    socket.send(JSON.stringify({
+      type: selectedRole === 'receiver' ? 'register-receiver' : 'register-sender',
+      cert: localCertificate,
+      computerName: 'Web-' + selectedRole.toUpperCase()
+    }));
+  };
+
+  socket.onmessage = async (event) => {
+    let msg;
     try {
-      const res = await fetch(`${getBaseUrl()}/api/poll`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: clientId, role: mode })
-      });
-      const data = await res.json();
-      
-      if (data && data.type !== 'idle' && data.type !== 'waiting') {
-        handleSignalingMessage(data);
-      }
-    } catch (err) {
-      console.error('Signaling HTTP Poll crash:', err);
+      msg = JSON.parse(event.data);
+    } catch (e) {
+      return;
     }
-  }, 1500);
+    handleSignalingMessage(msg);
+  };
+
+  socket.onerror = (err) => {
+    console.error('Socket error:', err);
+    addLog('NET', 'Signaling server socket error.');
+  };
+
+  socket.onclose = () => {
+    addLog('NET', 'Signaling connection closed.');
+    cleanupConnections();
+  };
 }
 
-// Send a WebRTC Signal
-async function sendSignal(signalData) {
-  try {
-    await fetch(`${getBaseUrl()}/api/send-signal`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: clientId, role: mode, signal: signalData })
-    });
-  } catch (err) {
-    console.error('Failed to dispatch signaling HTTP post:', err);
-  }
-}
-
-// Message Dispatcher
 async function handleSignalingMessage(msg) {
   switch (msg.type) {
+    case 'registered':
+      receiverCode = msg.code;
+      document.getElementById('display-receiver-code').innerText = msg.code;
+      setPairingState('idle', 'Awaiting connection request...');
+      addLog('NET', `Receiver registered. Secure Code: ${msg.code}`);
+      break;
+
+    case 'sender-registered':
+      setPairingState('idle', 'Ready to connect.');
+      addLog('NET', 'Sender registered.');
+      break;
+
     case 'incoming-request': {
-      // Receiver displays Accept modal
-      peerCert = msg.peerCert;
-      peerComputerName = msg.peerComputerName;
+      const { challenge, peerCert: pCert, peerComputerName: pName } = msg;
+      peerCert = pCert;
+      peerComputerName = pName;
       
       document.getElementById('req-peer-host').innerText = peerComputerName;
       document.getElementById('req-peer-id').innerText = peerCert.id;
       document.getElementById('incoming-request-box').style.display = 'block';
       
-      // Save challenge to sign on click Accept
-      incomingRequestChallenge = msg.challenge;
+      incomingRequestChallenge = challenge;
       setPairingState('incoming-request', 'Incoming authorization request...');
       break;
     }
 
     case 'auth-challenge': {
-      // Sender signs challenge
       const { challenge, peerCert: pCert, peerComputerName: pName } = msg;
       peerCert = pCert;
       peerComputerName = pName;
 
-      setPairingState('authenticating', 'Signing cryptographic challenge...');
+      setPairingState('authenticating', 'Signing verification challenge...');
       addLog('SECURITY', 'Signaling challenge received. Computing signature...');
 
       const signature = await signChallenge(challenge, localPrivateKeyObj);
       
-      // Submit signature to server
-      await fetch(`${getBaseUrl()}/api/submit-signature`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: clientId, role: 'sender', signature })
-      });
+      socket.send(JSON.stringify({
+        type: 'auth-signature',
+        signature: signature
+      }));
       
-      setPairingState('pairing', 'Awaiting receiver authentication...');
+      setPairingState('pairing', 'Awaiting receiver authentication verification...');
       break;
     }
 
     case 'verify-peer-signature': {
-      // Both verify
       const { signature, challenge, peerCert: pCert } = msg;
       addLog('SECURITY', `Verifying signature of peer ${pCert.owner}...`);
 
       const verified = await verifyChallenge(challenge, signature, pCert.publicKey);
       addLog('SECURITY', `Mutual verification status: ${verified ? 'SUCCESS' : 'FAILED'}`);
       
-      await fetch(`${getBaseUrl()}/api/submit-verification`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: clientId, role: mode, verified })
-      });
+      socket.send(JSON.stringify({
+        type: 'verify-peer-result',
+        verified: verified
+      }));
 
-      if (!verified) {
-        alert('Authentication failed.');
+      if (verified) {
+        peerCert = pCert;
+        peerComputerName = pCert.owner;
+      } else {
+        alert('Authentication signature check failed.');
         cleanupConnections();
       }
       break;
     }
 
-    case 'active-session': {
+    case 'auth-success': {
       if (!sessionActive) {
-        addLog('SECURITY', 'Mutual RSA Verification succeeded. Loading P2P WebRTC.');
+        addLog('SECURITY', 'Mutual RSA Verification succeeded. Loading WebRTC.');
         sessionActive = true;
-        
-        const badge = document.getElementById('connection-status');
-        badge.className = 'status-badge status-connected';
-        badge.querySelector('.status-text').innerText = 'CONNECTED';
         
         document.getElementById('session-peer-name').innerText = `SECURE LINK: ${peerComputerName.toUpperCase()}`;
         
-        // Show viewport controls
         if (mode === 'receiver') {
           document.getElementById('btn-start-stream').style.display = 'inline-block';
         }
         
         switchScreen('screen-session');
-        
-        // Initialize WebRTC
         initializeWebRTC();
-      }
-
-      // Route WebRTC SDP and ICE signaling messages
-      if (msg.signals && msg.signals.length > 0) {
-        for (const sig of msg.signals) {
-          handleWebRTCSignal(sig);
-        }
       }
       break;
     }
 
-    case 'declined':
-      alert('The session request was declined by the remote device.');
+    case 'connection-declined':
+      alert('The session request was declined by the receiver.');
       cleanupConnections();
       switchScreen('screen-mode');
+      break;
+
+    case 'error':
+      alert('Server error: ' + msg.message);
+      cleanupConnections();
+      switchScreen('screen-mode');
+      break;
+
+    case 'peer-disconnected':
+      addLog('NET', `Remote peer disconnected: ${msg.message}`);
+      cleanupConnections();
+      switchScreen('screen-mode');
+      break;
+
+    case 'signal':
+      handleWebRTCSignal(msg.signal);
       break;
   }
 }
 
 // --- Mode Selection triggers ---
 
-// Receiver Mode Start
-document.getElementById('btn-select-receiver').addEventListener('click', async () => {
-  cleanupConnections();
-  setPairingState('idle', 'Connecting to signaling cloud...');
+document.getElementById('btn-select-receiver').addEventListener('click', () => {
+  mode = 'receiver';
   switchScreen('screen-receiver');
-
-  try {
-    const res = await fetch(`${getBaseUrl()}/api/register-receiver`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cert: localCertificate, computerName: 'Web-Receiver-Host' })
-    });
-    const data = await res.json();
-    if (data.success) {
-      clientId = data.receiverId;
-      receiverCode = data.code;
-      document.getElementById('display-receiver-code').innerText = data.code;
-      setPairingState('idle', 'Awaiting connection request...');
-      addLog('NET', `Registered Receiver on Vercel. Code: ${data.code}`);
-      
-      startSignalingPoll();
-    } else {
-      throw new Error(data.error);
-    }
-  } catch (err) {
-    alert('Failed to register: ' + err.message);
-    switchScreen('screen-mode');
-  }
+  connectSignalingServer('receiver');
 });
 
-// Sender Mode Start
-document.getElementById('btn-select-sender').addEventListener('click', async () => {
-  cleanupConnections();
+document.getElementById('btn-select-sender').addEventListener('click', () => {
+  mode = 'sender';
   switchScreen('screen-sender');
-  setPairingState('idle', 'Connecting to signaling cloud...');
-
-  try {
-    const res = await fetch(`${getBaseUrl()}/api/register-sender`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cert: localCertificate })
-    });
-    const data = await res.json();
-    if (data.success) {
-      clientId = data.senderId;
-      setPairingState('idle', 'Ready to connect.');
-      addLog('NET', 'Registered Sender on Vercel.');
-    } else {
-      throw new Error(data.error);
-    }
-  } catch (err) {
-    alert('Failed to register sender: ' + err.message);
-    switchScreen('screen-mode');
-  }
+  connectSignalingServer('sender');
 });
 
 // Sender Connect action
-document.getElementById('btn-sender-connect').addEventListener('click', async () => {
+document.getElementById('btn-sender-connect').addEventListener('click', () => {
   const code = document.getElementById('input-pair-code').value.trim();
-  if (code.length < 6) return;
+  if (code.length < 6 || !socket) return;
 
   setPairingState('pairing', 'Initiating connection tunnel request...');
-  
-  try {
-    const res = await fetch(`${getBaseUrl()}/api/connect-request`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        senderId: clientId,
-        code: code,
-        cert: localCertificate,
-        computerName: 'Web-Sender-Host'
-      })
-    });
-    const data = await res.json();
-    
-    if (data.success) {
-      handleSignalingMessage({
-        type: 'auth-challenge',
-        challenge: data.challenge,
-        peerCert: data.peerCert,
-        peerComputerName: data.peerComputerName
-      });
-    } else {
-      throw new Error(data.error);
-    }
-  } catch (err) {
-    alert('Pairing request failed: ' + err.message);
-    setPairingState('idle');
-  }
+  socket.send(JSON.stringify({
+    type: 'connect-request',
+    code: code
+  }));
 });
 
 // Receiver Accept request
@@ -668,37 +595,32 @@ document.getElementById('btn-accept-request').addEventListener('click', async ()
 
   const signature = await signChallenge(incomingRequestChallenge, localPrivateKeyObj);
 
-  await fetch(`${getBaseUrl()}/api/incoming-request-response`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ receiverId: clientId, accept: true })
-  });
+  socket.send(JSON.stringify({
+    type: 'incoming-request-response',
+    accept: true
+  }));
 
-  await fetch(`${getBaseUrl()}/api/submit-signature`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: clientId, role: 'receiver', signature })
-  });
+  socket.send(JSON.stringify({
+    type: 'auth-signature',
+    signature: signature
+  }));
 });
 
 // Receiver Decline request
-document.getElementById('btn-decline-request').addEventListener('click', async () => {
+document.getElementById('btn-decline-request').addEventListener('click', () => {
   document.getElementById('incoming-request-box').style.display = 'none';
-  await fetch(`${getBaseUrl()}/api/incoming-request-response`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ receiverId: clientId, accept: false })
-  });
-  setPairingState('idle', 'Request declined. Awaiting connection request...');
+  socket.send(JSON.stringify({
+    type: 'incoming-request-response',
+    accept: false
+  }));
+  setPairingState('idle', 'Awaiting connection request...');
 });
 
-// Close active link
-document.getElementById('btn-close-session').addEventListener('click', async () => {
-  await fetch(`${getBaseUrl()}/api/disconnect`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: clientId, role: mode })
-  });
+// Close session
+document.getElementById('btn-close-session').addEventListener('click', () => {
+  if (socket) {
+    socket.send(JSON.stringify({ type: 'disconnect-peer' }));
+  }
   cleanupConnections();
   switchScreen('screen-mode');
 });
@@ -709,17 +631,18 @@ function initializeWebRTC() {
   const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
   peerConnection = new RTCPeerConnection(configuration);
 
-  // ICE Candidates callback
   peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
-      sendSignal({
-        type: 'ice-candidate',
-        candidate: event.candidate
-      });
+      socket.send(JSON.stringify({
+        type: 'signal',
+        signal: {
+          type: 'ice-candidate',
+          candidate: event.candidate
+        }
+      }));
     }
   };
 
-  // Remote stream viewport display
   peerConnection.ontrack = (event) => {
     addLog('SESSION', 'Remote WebRTC Video Track connected.');
     const remoteVideo = document.getElementById('remote-video');
@@ -728,7 +651,6 @@ function initializeWebRTC() {
     document.getElementById('video-placeholder').style.display = 'none';
   };
 
-  // Setup DataChannel (for chat overlay sync)
   if (mode === 'sender') {
     const dataChannel = peerConnection.createDataChannel('chat');
     setupDataChannel(dataChannel);
@@ -739,7 +661,6 @@ function initializeWebRTC() {
   }
 }
 
-// DataChannel binding
 function setupDataChannel(channel) {
   channel.onopen = () => addLog('SESSION', 'WebRTC Data Channel established.');
   channel.onmessage = (event) => {
@@ -753,7 +674,7 @@ function setupDataChannel(channel) {
   window.activeDataChannel = channel;
 }
 
-// Receiver triggers desktop screen share
+// Start Capture Screen (Receiver)
 document.getElementById('btn-start-stream').addEventListener('click', async () => {
   try {
     localStream = await navigator.mediaDevices.getDisplayMedia({
@@ -761,21 +682,22 @@ document.getElementById('btn-start-stream').addEventListener('click', async () =
       audio: false
     });
     
-    // Add stream tracks to WebRTC PC
     localStream.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStream);
     });
 
-    addLog('SESSION', 'Local desktop capture track enabled.');
+    addLog('SESSION', 'Local screen capture active.');
     
-    // Create Offer
     const offer = await peerConnection.createOffer();
     await peerConnection.setLocalDescription(offer);
     
-    sendSignal({
-      type: 'offer',
-      sdp: offer
-    });
+    socket.send(JSON.stringify({
+      type: 'signal',
+      signal: {
+        type: 'offer',
+        sdp: offer
+      }
+    }));
 
     document.getElementById('btn-start-stream').style.display = 'none';
   } catch (err) {
@@ -783,7 +705,7 @@ document.getElementById('btn-start-stream').addEventListener('click', async () =
   }
 });
 
-// WebRTC signal receiver
+// Route ICE / SDP signals
 async function handleWebRTCSignal(signal) {
   if (signal.type === 'offer') {
     addLog('SESSION', 'WebRTC Offer SDP received.');
@@ -792,10 +714,13 @@ async function handleWebRTCSignal(signal) {
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
     
-    sendSignal({
-      type: 'answer',
-      sdp: answer
-    });
+    socket.send(JSON.stringify({
+      type: 'signal',
+      signal: {
+        type: 'answer',
+        sdp: answer
+      }
+    }));
   } else if (signal.type === 'answer') {
     addLog('SESSION', 'WebRTC Answer SDP received.');
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -833,12 +758,16 @@ document.getElementById('btn-send-chat').addEventListener('click', () => {
   const text = input.value.trim();
   if (!text) return;
 
-  // Try data channel first, fallback to signaling poll
   if (window.activeDataChannel && window.activeDataChannel.readyState === 'open') {
     window.activeDataChannel.send(JSON.stringify({ type: 'chat', text }));
   } else {
-    // Polling signal fallback
-    sendSignal({ type: 'chat', text });
+    // Fallback through WebSocket signaling
+    if (socket) {
+      socket.send(JSON.stringify({
+        type: 'signal',
+        signal: { type: 'chat', text }
+      }));
+    }
   }
 
   appendChatMessage('me', text);
@@ -849,13 +778,17 @@ document.getElementById('input-chat').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('btn-send-chat').click();
 });
 
-// Sync clipboard action
 document.getElementById('btn-sync-clipboard').addEventListener('click', () => {
   const payload = { type: 'clipboard' };
   if (window.activeDataChannel && window.activeDataChannel.readyState === 'open') {
     window.activeDataChannel.send(JSON.stringify(payload));
   } else {
-    sendSignal(payload);
+    if (socket) {
+      socket.send(JSON.stringify({
+        type: 'signal',
+        signal: payload
+      }));
+    }
   }
   addLog('SESSION', 'Clipboard Sync signal pushed.');
 });

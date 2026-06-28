@@ -2,6 +2,8 @@
 const { WebSocketServer } = require('ws');
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 // Helper to generate a random 6-digit code
 function generateSessionCode() {
@@ -9,8 +11,27 @@ function generateSessionCode() {
 }
 
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('USB Remote Connect Signaling Server is running.');
+  // Support static file serving from 'public' folder
+  let filePath = req.url.split('?')[0];
+  if (filePath === '/') {
+    filePath = '/index.html';
+  }
+
+  const fullPath = path.join(__dirname, 'public', filePath);
+
+  if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+    let contentType = 'text/html';
+    if (filePath.endsWith('.css')) contentType = 'text/css';
+    if (filePath.endsWith('.js')) contentType = 'application/javascript';
+    if (filePath.endsWith('.json')) contentType = 'application/json';
+    if (filePath.endsWith('.svg')) contentType = 'image/svg+xml';
+
+    res.writeHead(200, { 'Content-Type': contentType });
+    fs.createReadStream(fullPath).pipe(res);
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('USB Remote Connect Signaling Server is running.');
+  }
 });
 
 const wss = new WebSocketServer({ server });
