@@ -38,6 +38,9 @@ export default function App() {
   const [activeReceivers, setActiveReceivers] = useState([]);
   const [countdown, setCountdown] = useState(5);
   const [lastRole, setLastRole] = useState(null);
+  const [sessionRoom, setSessionRoom] = useState(localStorage.getItem('usb-remote-room') || '');
+  const [allowedSenderInput, setAllowedSenderInput] = useState(localStorage.getItem('usb-remote-last-allowed-sender') || '');
+  const [receiverWhitelistSetup, setReceiverWhitelistSetup] = useState(false);
 
   // Security and DB states
   const [trustedDevices, setTrustedDevices] = useState([]);
@@ -108,7 +111,8 @@ export default function App() {
       return () => clearTimeout(timer);
     } else if (countdown === 0 && lastRole && activeUSB && mode === 'select') {
       addSecurityLog('USB', `Auto-Launch: Timer expired. Launching role "${lastRole}" automatically...`);
-      initializeConnection(lastRole);
+      const savedSender = localStorage.getItem('usb-remote-last-allowed-sender') || '';
+      initializeConnection(lastRole, savedSender);
     }
   }, [countdown, lastRole, activeUSB, mode]);
 
@@ -321,7 +325,7 @@ export default function App() {
   };
 
   // Establish connection and register on server
-  const initializeConnection = async (selectedRole) => {
+  const initializeConnection = async (selectedRole, senderWhitelist = '') => {
     if (!activeUSB) {
       alert('No USB Security Key authenticated.');
       return;
@@ -329,6 +333,9 @@ export default function App() {
 
     // Save selection for future auto-launch on USB insertion
     localStorage.setItem('usb-remote-last-role', selectedRole);
+    if (selectedRole === 'receiver' && senderWhitelist) {
+      localStorage.setItem('usb-remote-last-allowed-sender', senderWhitelist);
+    }
 
     cleanupConnections();
     setServerStatus('connecting');
@@ -343,7 +350,7 @@ export default function App() {
           const res = await fetch(`${serverUrl}/api/register-receiver`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cert: activeUSB.cert, computerName })
+            body: JSON.stringify({ cert: activeUSB.cert, computerName, sessionName: sessionRoom, allowedSenderName: senderWhitelist })
           });
           const data = await res.json();
           if (data.success) {
@@ -363,7 +370,7 @@ export default function App() {
           const res = await fetch(`${serverUrl}/api/register-sender`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cert: activeUSB.cert, computerName })
+            body: JSON.stringify({ cert: activeUSB.cert, computerName, sessionName: sessionRoom })
           });
           const data = await res.json();
           if (data.success) {
@@ -397,17 +404,17 @@ export default function App() {
           ws.send(JSON.stringify({
             type: 'register-receiver',
             cert: activeUSB.cert,
-            computerName: computerName
+            computerName: computerName,
+            sessionName: sessionRoom,
+            allowedSenderName: senderWhitelist
           }));
           setPairingMessage('Registering security keys on cloud...');
         } else {
           ws.send(JSON.stringify({
             type: 'register-sender',
             cert: activeUSB.cert,
-            computerName: computerName
-          }));
-          ws.send(JSON.stringify({
-            type: 'get-active-receivers'
+            computerName: computerName,
+            sessionName: sessionRoom
           }));
           setMode('sender');
           setPairingState('idle');
@@ -853,6 +860,30 @@ export default function App() {
             </div>
           </div>
 
+          {/* Active Workspace status */}
+          {sessionRoom && (
+            <div style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid var(--glass-border)', padding: '0.75rem', borderRadius: '10px', marginBottom: '1.5rem', fontSize: '0.85rem', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Active Workspace:</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold' }}>
+                  <Globe size={16} className="accent-text" />
+                  <span>{sessionRoom}</span>
+                </div>
+                <button 
+                  onClick={() => {
+                    localStorage.removeItem('usb-remote-room');
+                    setSessionRoom('');
+                    cleanupConnections();
+                  }} 
+                  className="btn btn-secondary" 
+                  style={{ padding: '0.15rem 0.4rem', fontSize: '0.65rem' }}
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* USB Security Key Section */}
           <div style={{ marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -1019,8 +1050,50 @@ export default function App() {
             </div>
           )}
 
+          {/* 0. ROOM CONFIGURATION: Set workspace name */}
+          {sessionRoom === '' && (
+            <div className="glass-panel" style={{ margin: 'auto', maxWidth: '480px', textAlign: 'center' }}>
+              <div style={{ width: '80px', height: '80px', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                <Globe size={40} className="accent-text" />
+              </div>
+              <h2 style={{ fontSize: '1.5rem', marginBottom: '0.75rem' }}>Secure Session Workspace</h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.85rem', lineHeight: '1.5' }}>
+                Enter a common session workspace name to isolate your connections from other users on the public cloud relay.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', textAlign: 'left' }}>
+                <div className="form-group">
+                  <label className="form-label">WORKSPACE SESSION NAME</label>
+                  <input 
+                    type="text"
+                    placeholder="e.g. office-meeting-2" 
+                    className="form-input"
+                    id="session-room-input"
+                    style={{ textAlign: 'center', fontSize: '1.1rem', letterSpacing: '0.05em' }}
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    const val = document.getElementById('session-room-input').value.trim();
+                    if (val) {
+                      localStorage.setItem('usb-remote-room', val);
+                      setSessionRoom(val);
+                      addSecurityLog('NET', `Workspace session set to: "${val}"`);
+                    } else {
+                      alert('Please enter a valid workspace name.');
+                    }
+                  }} 
+                  className="btn btn-primary" 
+                  style={{ width: '100%', padding: '0.8rem' }}
+                >
+                  Enter Session Workspace
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* 1. STARTUP: Insert key / Guide */}
-          {!activeUSB && (
+          {sessionRoom !== '' && !activeUSB && (
             <div className="glass-panel" style={{ margin: 'auto', maxWidth: '580px', textAlign: 'center' }}>
               <div style={{ width: '80px', height: '80px', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
                 <Key size={40} className="accent-text" />
@@ -1054,7 +1127,7 @@ export default function App() {
           )}
 
           {/* 2. SELECT MODE */}
-          {activeUSB && mode === 'select' && (
+          {activeUSB && mode === 'select' && !receiverWhitelistSetup && (
             <div className="glass-panel" style={{ margin: 'auto', maxWidth: '500px', textAlign: 'center' }}>
               <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Select Mode</h2>
               <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem', fontSize: '0.85rem' }}>
@@ -1093,7 +1166,7 @@ export default function App() {
                   </div>
                 </button>
 
-                <button onClick={() => initializeConnection('receiver')} className="btn btn-secondary" style={{ flexDirection: 'column', padding: '2rem 1.5rem', gap: '1rem', borderRadius: '12px' }}>
+                <button onClick={() => setReceiverWhitelistSetup(true)} className="btn btn-secondary" style={{ flexDirection: 'column', padding: '2rem 1.5rem', gap: '1rem', borderRadius: '12px' }}>
                   <Laptop size={32} className="accent-text" />
                   <div>
                     <h4 style={{ fontWeight: 'bold', fontSize: '1.1rem', color: 'white' }}>Receiver</h4>
@@ -1103,6 +1176,54 @@ export default function App() {
               </div>
 
               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Current Key: {activeUSB.label} ({activeUSB.cert.id.substring(0, 8)}...)</span>
+            </div>
+          )}
+
+          {/* 2.2 RECEIVER SENDER AUTHORIZATION WHITELIST */}
+          {activeUSB && mode === 'select' && receiverWhitelistSetup && (
+            <div className="glass-panel" style={{ margin: 'auto', maxWidth: '500px', textAlign: 'center' }}>
+              <h2 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Authorize Sender</h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                Type the computer name or certificate label of the Sender you want to allow.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem', textAlign: 'left' }}>
+                <div className="form-group">
+                  <label className="form-label">AUTHORIZED SENDER ALIAS / HOSTNAME</label>
+                  <input 
+                    type="text"
+                    value={allowedSenderInput}
+                    onChange={(e) => setAllowedSenderInput(e.target.value)}
+                    placeholder="e.g. Rajnish-Laptop" 
+                    className="form-input"
+                    style={{ textAlign: 'center', fontSize: '1.1rem' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button 
+                    onClick={() => setReceiverWhitelistSetup(false)} 
+                    className="btn btn-secondary" 
+                    style={{ flex: 1 }}
+                  >
+                    Back
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (allowedSenderInput.trim()) {
+                        setReceiverWhitelistSetup(false);
+                        initializeConnection('receiver', allowedSenderInput.trim());
+                      } else {
+                        alert('Please type the Sender name to whitelist.');
+                      }
+                    }} 
+                    disabled={!allowedSenderInput.trim()}
+                    className="btn btn-primary" 
+                    style={{ flex: 2 }}
+                  >
+                    Start Standby
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 

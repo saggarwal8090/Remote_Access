@@ -80,6 +80,37 @@ function initiateHandshake(senderId, receiverId) {
   console.log(`[Server] Automated demo handshake initiated between Sender ${senderId} and Receiver ${receiverId}.`);
 }
 
+function triggerRoomAutoPairing(sessionName) {
+  if (!sessionName) return;
+
+  const roomReceivers = [];
+  const roomSenders = [];
+
+  for (const [sId, info] of sockets.entries()) {
+    if (info.sessionName === sessionName && !info.peerId) {
+      if (info.role === 'receiver') roomReceivers.push(info);
+      if (info.role === 'sender') roomSenders.push(info);
+    }
+  }
+
+  for (const receiverInfo of roomReceivers) {
+    for (const senderInfo of roomSenders) {
+      if (senderInfo.peerId) continue;
+      
+      const senderIdentityName = senderInfo.computerName;
+      const matchesAllowed = receiverInfo.allowedSenderName && 
+        (senderIdentityName.toLowerCase() === receiverInfo.allowedSenderName.toLowerCase() || 
+         (senderInfo.cert && senderInfo.cert.label.toLowerCase() === receiverInfo.allowedSenderName.toLowerCase()));
+
+      if (matchesAllowed) {
+        initiateHandshake(senderInfo.id, receiverInfo.id);
+        console.log(`[Server] Room "${sessionName}" Auto-Pairing: Matched Sender ${senderInfo.computerName} -> Receiver ${receiverInfo.computerName}`);
+        break;
+      }
+    }
+  }
+}
+
 wss.on('connection', (ws) => {
   const socketId = crypto.randomUUID();
   console.log(`[Server] New socket connected: ${socketId}`);
@@ -115,6 +146,8 @@ wss.on('connection', (ws) => {
         clientInfo.role = 'receiver';
         clientInfo.cert = msg.cert; // USB certificate info
         clientInfo.computerName = msg.computerName || 'Unknown-PC';
+        clientInfo.sessionName = msg.sessionName;
+        clientInfo.allowedSenderName = msg.allowedSenderName;
 
         // Generate a unique 6-digit code
         let code = generateSessionCode();
@@ -129,7 +162,10 @@ wss.on('connection', (ws) => {
           type: 'registered',
           code: code
         }));
-        console.log(`[Server] Receiver registered with code ${code} (${clientInfo.computerName})`);
+        console.log(`[Server] Receiver registered under room "${msg.sessionName}" whitelisting Sender "${msg.allowedSenderName}"`);
+        
+        // Auto-pairing trigger inside room
+        triggerRoomAutoPairing(msg.sessionName);
         break;
       }
 
@@ -138,11 +174,15 @@ wss.on('connection', (ws) => {
         clientInfo.role = 'sender';
         clientInfo.cert = msg.cert;
         clientInfo.computerName = msg.computerName || 'Unknown-PC';
+        clientInfo.sessionName = msg.sessionName;
 
         ws.send(JSON.stringify({
           type: 'sender-registered'
         }));
-        console.log(`[Server] Sender registered: ${socketId} (${clientInfo.computerName})`);
+        console.log(`[Server] Sender registered under room "${msg.sessionName}": ${socketId} (${clientInfo.computerName})`);
+        
+        // Auto-pairing trigger inside room
+        triggerRoomAutoPairing(msg.sessionName);
         break;
       }
 

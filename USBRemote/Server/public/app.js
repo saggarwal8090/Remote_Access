@@ -4,6 +4,8 @@
 let localCertificate = null;
 let localPrivateKeyPEM = null;
 let localPrivateKeyObj = null; // Web Crypto key object
+let sessionRoomName = localStorage.getItem('usb-remote-room') || '';
+let allowedSenderName = localStorage.getItem('usb-remote-last-allowed-sender') || '';
 
 let mode = 'select'; // 'auth', 'select', 'sender', 'receiver', 'session'
 let clientId = '';
@@ -21,6 +23,7 @@ let incomingRequestChallenge = '';
 
 // DOM Elements
 const screens = {
+  'screen-room': document.getElementById('screen-room'),
   'screen-auth': document.getElementById('screen-auth'),
   'screen-mode': document.getElementById('screen-mode'),
   'screen-sender': document.getElementById('screen-sender'),
@@ -610,9 +613,29 @@ async function handleSignalingMessage(msg) {
 // --- Mode Selection triggers ---
 
 document.getElementById('btn-select-receiver').addEventListener('click', () => {
-  mode = 'receiver';
-  switchScreen('screen-receiver');
-  connectSignalingServer('receiver');
+  // Show Allowed Sender Input Form
+  document.getElementById('mode-selection-grid').style.display = 'none';
+  document.getElementById('receiver-whitelist-setup').style.display = 'block';
+  document.getElementById('input-allowed-sender').value = allowedSenderName;
+});
+
+document.getElementById('btn-whitelist-back').addEventListener('click', () => {
+  // Hide Allowed Sender Input Form and go back to selection grid
+  document.getElementById('receiver-whitelist-setup').style.display = 'none';
+  document.getElementById('mode-selection-grid').style.display = 'grid';
+});
+
+document.getElementById('btn-whitelist-start').addEventListener('click', () => {
+  const val = document.getElementById('input-allowed-sender').value.trim();
+  if (val) {
+    allowedSenderName = val;
+    localStorage.setItem('usb-remote-last-allowed-sender', val);
+    mode = 'receiver';
+    switchScreen('screen-receiver');
+    connectSignalingServer('receiver', val);
+  } else {
+    alert('Please specify the Sender name to whitelist.');
+  }
 });
 
 document.getElementById('btn-select-sender').addEventListener('click', () => {
@@ -848,7 +871,8 @@ navButtons.mode.addEventListener('click', () => {
   else if (mode === 'receiver') switchScreen('screen-receiver');
   else if (mode === 'sender') switchScreen('screen-sender');
   else if (localCertificate) switchScreen('screen-mode');
-  else switchScreen('screen-auth');
+  else if (sessionRoomName) switchScreen('screen-auth');
+  else switchScreen('screen-room');
 });
 
 document.getElementById('btn-clear-logs').addEventListener('click', () => {
@@ -857,7 +881,38 @@ document.getElementById('btn-clear-logs').addEventListener('click', () => {
   addLog('SECURITY', 'Logs cleared.');
 });
 
+// Workspace room setup handlers
+document.getElementById('btn-join-room').addEventListener('click', () => {
+  const val = document.getElementById('input-room-name').value.trim();
+  if (val) {
+    sessionRoomName = val;
+    localStorage.setItem('usb-remote-room', val);
+    document.getElementById('active-workspace-name').innerText = val;
+    document.getElementById('sidebar-workspace-card').style.display = 'block';
+    switchScreen('screen-auth');
+    addLog('NET', `Workspace session set to: "${val}"`);
+  } else {
+    alert('Please enter a valid workspace name.');
+  }
+});
+
+document.getElementById('btn-change-workspace').addEventListener('click', () => {
+  sessionRoomName = '';
+  localStorage.removeItem('usb-remote-room');
+  document.getElementById('sidebar-workspace-card').style.display = 'none';
+  switchScreen('screen-room');
+  cleanupConnections();
+});
+
 // Boot app
 setupDragAndDrop();
+
+if (sessionRoomName) {
+  document.getElementById('active-workspace-name').innerText = sessionRoomName;
+  document.getElementById('sidebar-workspace-card').style.display = 'block';
+  switchScreen('screen-auth');
+} else {
+  document.getElementById('sidebar-workspace-card').style.display = 'none';
+  switchScreen('screen-room');
+}
 addLog('SECURITY', 'USB Remote Web Console initialized.');
-switchScreen('screen-auth');

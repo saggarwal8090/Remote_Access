@@ -38,6 +38,18 @@
           </div>
         </div>
 
+        <!-- Session Workspace Card -->
+        <div id="sidebar-workspace-card" class="sidebar-card" style="display: none; background: rgba(99, 102, 241, 0.05);">
+          <div class="flex-space-between">
+            <span class="card-label">Active Workspace</span>
+            <button id="btn-change-workspace" class="text-btn text-muted" style="font-size: 0.7rem;">Change</button>
+          </div>
+          <div class="flex-align-center" style="margin-top: 5px;">
+            <span class="host-icon">🌐</span>
+            <span id="active-workspace-name" class="host-name">Default-Room</span>
+          </div>
+        </div>
+
         <!-- Security Key Status -->
         <div class="sidebar-card">
           <div class="flex-space-between">
@@ -71,8 +83,26 @@
       <!-- Main Workspace -->
       <main class="web-workspace">
         
+        <!-- 0. ROOM WORKSPACE CONFIGURATION SCREEN -->
+        <section id="screen-room" class="workspace-screen screen-active">
+          <div class="glass-panel centered-panel" style="max-width: 480px;">
+            <div class="panel-icon">🌐</div>
+            <h2>Secure Session Workspace</h2>
+            <p class="text-secondary" style="margin-bottom: 1.5rem;">
+              Enter a common session workspace name to isolate your connection traffic from other public server users.
+            </p>
+
+            <div class="form-group" style="text-align: left; width: 100%;">
+              <label class="form-label">WORKSPACE SESSION NAME</label>
+              <input type="text" id="input-room-name" placeholder="e.g. office-meeting-2" class="form-input" style="text-align: center; font-size: 1.1rem;">
+            </div>
+
+            <button id="btn-join-room" class="btn btn-primary" style="width: 100%; padding: 12px; margin-top: 10px;">Enter Session Workspace</button>
+          </div>
+        </section>
+
         <!-- 1. LOGIN / CREDENTIALS UPLOAD SCREEN -->
-        <section id="screen-auth" class="workspace-screen screen-active">
+        <section id="screen-auth" class="workspace-screen">
           <div class="glass-panel centered-panel" style="max-width: 580px;">
             <div class="panel-icon">🔐</div>
             <h2>USB Security Key Verification</h2>
@@ -125,7 +155,7 @@
               Choose your role. The Sender can view and control the remote host. The Receiver will capture and stream their screen.
             </p>
 
-            <div class="mode-grid">
+            <div id="mode-selection-grid" class="mode-grid">
               <button id="btn-select-sender" class="mode-select-btn">
                 <span class="mode-icon">📡</span>
                 <span class="mode-title">Sender</span>
@@ -137,6 +167,18 @@
                 <span class="mode-title">Receiver</span>
                 <span class="mode-desc">Share this local screen</span>
               </button>
+            </div>
+
+            <!-- Whitelist setup (hidden initially) -->
+            <div id="receiver-whitelist-setup" style="display: none; margin-top: 1rem; text-align: left; width: 100%;">
+              <div class="form-group" style="margin-bottom: 1.5rem;">
+                <label class="form-label">AUTHORIZED SENDER ALIAS / HOSTNAME</label>
+                <input type="text" id="input-allowed-sender" placeholder="e.g. Rajnish-Laptop" class="form-input" style="text-align: center; font-size: 1.1rem; width: 100%;">
+              </div>
+              <div class="flex-row" style="gap: 10px; display: flex; width: 100%;">
+                <button id="btn-whitelist-back" class="btn btn-secondary" style="flex: 1; padding: 10px;">Back</button>
+                <button id="btn-whitelist-start" class="btn btn-primary" style="flex: 2; padding: 10px;">Start Standby</button>
+              </div>
             </div>
           </div>
         </section>
