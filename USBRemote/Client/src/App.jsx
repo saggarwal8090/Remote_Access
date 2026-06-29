@@ -34,6 +34,10 @@ export default function App() {
   const [ping, setPing] = useState(12); // ms
   const [sessionActive, setSessionActive] = useState(false);
   const [clipboardSynced, setClipboardSynced] = useState(false);
+  const [peerStream, setPeerStream] = useState(null);
+  const [activeReceivers, setActiveReceivers] = useState([]);
+  const [countdown, setCountdown] = useState(5);
+  const [lastRole, setLastRole] = useState(null);
 
   // Security and DB states
   const [trustedDevices, setTrustedDevices] = useState([]);
@@ -52,6 +56,8 @@ export default function App() {
   const socketRef = useRef(null);
   const logEndRef = useRef(null);
   const pollIntervalRef = useRef(null);
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
 
   // Load initial settings and check USB drives
   useEffect(() => {
@@ -78,6 +84,33 @@ export default function App() {
       cleanupConnections();
     };
   }, []);
+
+  // Trigger auto-pairing role selection countdown when USB is read
+  useEffect(() => {
+    if (activeUSB && mode === 'select') {
+      const savedRole = localStorage.getItem('usb-remote-last-role');
+      if (savedRole) {
+        setLastRole(savedRole);
+        setCountdown(5);
+        addSecurityLog('USB', `Auto-Launch: Saved role "${savedRole}" discovered. Timer started.`);
+      }
+    } else {
+      setLastRole(null);
+      setCountdown(5);
+    }
+  }, [activeUSB, mode]);
+
+  useEffect(() => {
+    if (countdown > 0 && lastRole && activeUSB && mode === 'select') {
+      const timer = setTimeout(() => {
+        setCountdown(prev => prev - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (countdown === 0 && lastRole && activeUSB && mode === 'select') {
+      addSecurityLog('USB', `Auto-Launch: Timer expired. Launching role "${lastRole}" automatically...`);
+      initializeConnection(lastRole);
+    }
+  }, [countdown, lastRole, activeUSB, mode]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -178,10 +211,109 @@ export default function App() {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+    setPeerStream(null);
     setSocket(null);
     setServerStatus('disconnected');
     setPairingState('idle');
     setSessionActive(false);
+  };
+
+  // Initialize WebRTC connection
+  const initializeWebRTC = async (currentRole) => {
+    addSecurityLog('SESSION', `Initializing WebRTC PeerConnection as ${currentRole}...`);
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    peerConnectionRef.current = pc;
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'signal',
+          signal: { type: 'ice-candidate', candidate: event.candidate }
+        }));
+      }
+    };
+
+    pc.ontrack = (event) => {
+      addSecurityLog('SESSION', 'Remote WebRTC Video Track connected.');
+      setPeerStream(event.streams[0]);
+    };
+
+    // If role is receiver, automatically start capturing native Electron screen sources
+    if (currentRole === 'receiver') {
+      try {
+        const sourceId = await window.electronAPI.getScreenSourceId();
+        if (sourceId) {
+          addSecurityLog('SESSION', `Acquired Electron Screen Source ID: ${sourceId}. Booting capture...`);
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                chromeMediaSourceId: sourceId,
+                minWidth: 1280,
+                maxWidth: 1920,
+                minHeight: 720,
+                maxHeight: 1080
+              }
+            }
+          });
+          localStreamRef.current = stream;
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+          addSecurityLog('SESSION', 'Screen capture track enabled and attached.');
+
+          // Generate SDP Offer
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+            socketRef.current.send(JSON.stringify({
+              type: 'signal',
+              signal: { type: 'offer', sdp: offer }
+            }));
+            addSecurityLog('SESSION', 'WebRTC SDP Offer dispatched to remote peer.');
+          }
+        } else {
+          addSecurityLog('SESSION', 'Failed to get native screen capture source ID.');
+        }
+      } catch (err) {
+        addSecurityLog('SESSION', `Failed to capture screen: ${err.message}`);
+      }
+    }
+  };
+
+  const handleWebRTCSignal = async (signal) => {
+    const pc = peerConnectionRef.current;
+    if (!pc) return;
+
+    if (signal.type === 'offer') {
+      addSecurityLog('SESSION', 'WebRTC Offer SDP received. Generating Answer.');
+      await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          type: 'signal',
+          signal: { type: 'answer', sdp: answer }
+        }));
+        addSecurityLog('SESSION', 'WebRTC SDP Answer dispatched to remote peer.');
+      }
+    } else if (signal.type === 'answer') {
+      addSecurityLog('SESSION', 'WebRTC Answer SDP received.');
+      await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+    } else if (signal.type === 'ice-candidate') {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+      } catch (e) {
+        console.error('Failed to append ICE Candidate:', e);
+      }
+    }
   };
 
   const isHttpServer = () => {
@@ -194,6 +326,9 @@ export default function App() {
       alert('No USB Security Key authenticated.');
       return;
     }
+
+    // Save selection for future auto-launch on USB insertion
+    localStorage.setItem('usb-remote-last-role', selectedRole);
 
     cleanupConnections();
     setServerStatus('connecting');
@@ -271,6 +406,9 @@ export default function App() {
             cert: activeUSB.cert,
             computerName: computerName
           }));
+          ws.send(JSON.stringify({
+            type: 'get-active-receivers'
+          }));
           setMode('sender');
           setPairingState('idle');
         }
@@ -330,11 +468,59 @@ export default function App() {
         setPairingMessage('Ready to secure connect.');
         break;
 
+      case 'active-receivers-list': {
+        const list = msg.receivers;
+        setActiveReceivers(list);
+        
+        // Auto-pairing: if exactly one receiver is waiting on the server, auto-connect immediately!
+        if (list.length === 1) {
+          const singleReceiver = list[0];
+          addSecurityLog('NET', `Auto-Discovery: Exactly one active receiver found (${singleReceiver.computerName}). Auto-connecting...`);
+          setPairingState('requesting');
+          setPairingMessage(`Connecting to Receiver code ${singleReceiver.code}...`);
+          if (socketRef.current) {
+            socketRef.current.send(JSON.stringify({
+              type: 'connect-request',
+              code: singleReceiver.code
+            }));
+          }
+        } else if (list.length > 1) {
+          addSecurityLog('NET', `Auto-Discovery: Multiple active receivers found. User selection required.`);
+        } else {
+          addSecurityLog('NET', `Auto-Discovery: No active receivers found on signaling cloud.`);
+        }
+        break;
+      }
+
       case 'incoming-request': {
         const { challenge, peerCert, peerComputerName } = msg;
         setIncomingRequest({ challenge, peerCert, peerComputerName });
         setPairingState('incoming-request');
         addSecurityLog('SECURITY', `Incoming connection request from ${peerComputerName}`);
+        
+        // Zero-Click Auto-Accept: if device is already in trusted devices, bypass modal confirmation
+        const isTrusted = trustedDevices.some(d => d.id === peerCert.id);
+        if (isTrusted) {
+          addSecurityLog('SECURITY', `Device ${peerComputerName} is already trusted. Auto-accepting session request...`);
+          // We can call accept request directly
+          setPairingState('authenticating');
+          setPairingMessage('Signing security challenge...');
+          window.electronAPI.signChallenge(challenge, activeUSB.privateKey).then(signature => {
+            if (socketRef.current) {
+              socketRef.current.send(JSON.stringify({
+                type: 'incoming-request-response',
+                accept: true
+              }));
+              socketRef.current.send(JSON.stringify({
+                type: 'auth-signature',
+                signature: signature
+              }));
+            }
+          });
+          setIncomingRequest(null);
+        } else {
+          addSecurityLog('SECURITY', `Incoming peer is untrusted. Manual acceptance required.`);
+        }
         break;
       }
 
@@ -404,6 +590,8 @@ export default function App() {
           setSessionActive(true);
           setMode('session');
           handleAutoTrustDevice();
+          // Initialize native WebRTC screen share connection
+          initializeWebRTC(mode);
         }
 
         // Process any queued signals in Vercel mode
@@ -437,7 +625,7 @@ export default function App() {
         break;
 
       case 'signal':
-        handleSignalMessage(msg.signal);
+        handleWebRTCSignal(msg.signal);
         break;
     }
   };
@@ -873,6 +1061,29 @@ export default function App() {
                 Choose whether you want to share your desktop (Receiver) or control another computer (Sender).
               </p>
 
+              {/* Auto-launch countdown badge */}
+              {lastRole && countdown > 0 && (
+                <div style={{ 
+                  background: 'rgba(99,102,241,0.1)', 
+                  border: '1px solid var(--glass-border)', 
+                  padding: '0.75rem 1rem', 
+                  borderRadius: '10px', 
+                  marginBottom: '1.5rem', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'space-between',
+                  textAlign: 'left'
+                }}>
+                  <div>
+                    <p style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'white' }}>Auto-pairing key loaded...</p>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Launching <strong className="accent-text">{lastRole.toUpperCase()}</strong> mode in {countdown} seconds.</p>
+                  </div>
+                  <button onClick={() => setLastRole(null)} className="btn btn-danger" style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem' }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
                 <button onClick={() => initializeConnection('sender')} className="btn btn-secondary" style={{ flexDirection: 'column', padding: '2rem 1.5rem', gap: '1rem', borderRadius: '12px' }}>
                   <Radio size={32} className="accent-text" />
@@ -1054,38 +1265,56 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Virtual Remote Desktop Workspace (Simulated Screen) */}
+                {/* Remote Desktop Viewport / Live Stream */}
                 <div style={{ 
                   flex: 1, 
-                  background: '#04060c', 
+                  background: '#000', 
                   borderRadius: '12px', 
                   border: '1px solid rgba(255,255,255,0.05)', 
                   display: 'flex', 
-                  flexDirection: 'column',
-                  alignItems: 'center', 
-                  justifyContent: 'center',
                   position: 'relative',
                   overflow: 'hidden'
                 }}>
-                  {/* Neon Grid background */}
-                  <div style={{ 
-                    position: 'absolute', 
-                    top: 0, left: 0, right: 0, bottom: 0, 
-                    backgroundImage: 'linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)',
-                    backgroundSize: '20px 20px'
-                  }}></div>
-
-                  <div style={{ zIndex: 1, textAlign: 'center', padding: '2rem' }}>
-                    <ShieldCheck size={64} className="accent-text" style={{ marginBottom: '1rem', filter: 'drop-shadow(0 0 10px rgba(99,102,241,0.5))' }} />
-                    <h3 style={{ fontSize: '1.25rem', marginBottom: '0.5rem', color: 'white' }}>Secure Session Active</h3>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', maxWidth: '380px', margin: '0 auto 1.5rem', lineHeight: '1.4' }}>
-                      Peer connection successfully authenticated using USB hardware certificates. Screen and control channels are isolated.
-                    </p>
-                    <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-                      <div className="badge badge-success">MUTUAL AUTHENTICATED</div>
-                      <div className="badge badge-info">DIRECT PORT RELAY</div>
+                  {mode === 'sender' ? (
+                    peerStream ? (
+                      <video 
+                        ref={el => { if (el) el.srcObject = peerStream; }}
+                        autoPlay 
+                        playsInline 
+                        style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      />
+                    ) : (
+                      <div style={{ margin: 'auto', textAlign: 'center', zIndex: 1 }}>
+                        <RefreshCw className="animate-spin-slow accent-text" size={48} style={{ margin: '0 auto 1rem' }} />
+                        <h4 style={{ color: 'white', marginBottom: '0.5rem' }}>Waiting for Screen Feed...</h4>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Establishing peer-to-peer WebRTC video tunnel.</p>
+                      </div>
+                    )
+                  ) : (
+                    /* Receiver dashboard (showing stream status) */
+                    <div style={{ margin: 'auto', textAlign: 'center', zIndex: 1 }}>
+                      <div className="pulse-glow-icon" style={{ fontSize: '3rem', marginBottom: '1rem' }}>🖥️</div>
+                      <h4 style={{ color: 'white', marginBottom: '0.5rem' }}>Sharing Screen Live</h4>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', maxWidth: '320px', margin: '0 auto 1.5rem', lineHeight: '1.4' }}>
+                        Your desktop screen is being securely captured and streamed in real-time.
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                        <div className="badge badge-success">MUTUAL AUTHENTICATED</div>
+                        <div className="badge badge-success">SCREEN SHARING ACTIVE</div>
+                      </div>
                     </div>
-                  </div>
+                  )}
+
+                  {/* Neon Grid background for styling */}
+                  {!peerStream && (
+                    <div style={{ 
+                      position: 'absolute', 
+                      top: 0, left: 0, right: 0, bottom: 0, 
+                      backgroundImage: 'linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)',
+                      backgroundSize: '20px 20px',
+                      pointerEvents: 'none'
+                    }}></div>
+                  )}
                   
                   {/* Remote view details */}
                   <div style={{ position: 'absolute', bottom: '1rem', left: '1rem', fontSize: '0.7rem', color: 'var(--text-muted)', zIndex: 1 }}>

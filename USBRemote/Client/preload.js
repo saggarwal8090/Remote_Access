@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Host Details
   getComputerName: () => ipcRenderer.invoke('sys:get-computer-name'),
+  getScreenSourceId: () => ipcRenderer.invoke('sys:get-screen-source-id'),
 
   // Trusted Devices (Local Database / JSON store)
   getTrustedDevices: () => ipcRenderer.invoke('db:get-trusted'),

@@ -199,6 +199,25 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'get-active-receivers': {
+        const list = [];
+        for (const [code, rSocketId] of receivers.entries()) {
+          const rInfo = sockets.get(rSocketId);
+          if (rInfo) {
+            list.push({
+              code: code,
+              computerName: rInfo.computerName,
+              certId: rInfo.cert ? rInfo.cert.id : 'unknown'
+            });
+          }
+        }
+        ws.send(JSON.stringify({
+          type: 'active-receivers-list',
+          receivers: list
+        }));
+        break;
+      }
+
       case 'connect-request': {
         const { code } = msg;
         console.log(`[Server] Connection request from Sender ${socketId} for code ${code}`);

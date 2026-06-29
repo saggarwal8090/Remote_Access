@@ -429,6 +429,10 @@ function connectSignalingServer(selectedRole) {
       cert: localCertificate,
       computerName: 'Web-' + selectedRole.toUpperCase()
     }));
+
+    if (selectedRole === 'sender') {
+      socket.send(JSON.stringify({ type: 'get-active-receivers' }));
+    }
   };
 
   socket.onmessage = async (event) => {
@@ -466,17 +470,48 @@ async function handleSignalingMessage(msg) {
       addLog('NET', 'Sender registered.');
       break;
 
+    case 'active-receivers-list': {
+      const list = msg.receivers;
+      if (list.length === 1) {
+        addLog('NET', `Auto-Discovery: Exactly one active receiver found (${list[0].computerName}). Auto-connecting...`);
+        setPairingState('pairing', `Connecting to Receiver code ${list[0].code}...`);
+        socket.send(JSON.stringify({
+          type: 'connect-request',
+          code: list[0].code
+        }));
+      }
+      break;
+    }
+
     case 'incoming-request': {
       const { challenge, peerCert: pCert, peerComputerName: pName } = msg;
       peerCert = pCert;
       peerComputerName = pName;
       
-      document.getElementById('req-peer-host').innerText = peerComputerName;
-      document.getElementById('req-peer-id').innerText = peerCert.id;
-      document.getElementById('incoming-request-box').style.display = 'block';
+      // Auto-Accept if key ID is in trusted list in localStorage
+      const trustedList = JSON.parse(localStorage.getItem('usb-remote-trusted-web-keys') || '[]');
+      const isTrusted = trustedList.includes(peerCert.id);
       
-      incomingRequestChallenge = challenge;
-      setPairingState('incoming-request', 'Incoming authorization request...');
+      if (isTrusted) {
+        addLog('SECURITY', `Auto-Accept: Peer ${peerComputerName} is trusted. Signing verification signature...`);
+        setPairingState('authenticating', 'Signing cryptographic challenge...');
+        const signature = await signChallenge(challenge, localPrivateKeyObj);
+        socket.send(JSON.stringify({
+          type: 'incoming-request-response',
+          accept: true
+        }));
+        socket.send(JSON.stringify({
+          type: 'auth-signature',
+          signature: signature
+        }));
+      } else {
+        document.getElementById('req-peer-host').innerText = peerComputerName;
+        document.getElementById('req-peer-id').innerText = peerCert.id;
+        document.getElementById('incoming-request-box').style.display = 'block';
+        
+        incomingRequestChallenge = challenge;
+        setPairingState('incoming-request', 'Incoming authorization request...');
+      }
       break;
     }
 
@@ -523,8 +558,18 @@ async function handleSignalingMessage(msg) {
 
     case 'auth-success': {
       if (!sessionActive) {
-        addLog('SECURITY', 'Mutual RSA Verification succeeded. Loading WebRTC.');
+        addLog('SECURITY', 'Mutual RSA Verification succeeded. Loading P2P WebRTC.');
         sessionActive = true;
+
+        // Auto-save peer key to trusted list in localStorage for auto-accept
+        if (peerCert) {
+          const trustedList = JSON.parse(localStorage.getItem('usb-remote-trusted-web-keys') || '[]');
+          if (!trustedList.includes(peerCert.id)) {
+            trustedList.push(peerCert.id);
+            localStorage.setItem('usb-remote-trusted-web-keys', JSON.stringify(trustedList));
+            addLog('SECURITY', `Added key ID ${peerCert.id} to trusted browser keys.`);
+          }
+        }
         
         document.getElementById('session-peer-name').innerText = `SECURE LINK: ${peerComputerName.toUpperCase()}`;
         

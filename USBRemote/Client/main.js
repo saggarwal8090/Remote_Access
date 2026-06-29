@@ -140,6 +140,19 @@ function setupIPCHandlers() {
 
   // Host Info
   ipcMain.handle('sys:get-computer-name', () => os.hostname());
+  ipcMain.handle('sys:get-screen-source-id', async () => {
+    try {
+      const { desktopCapturer } = require('electron');
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+      if (sources.length > 0) {
+        return sources[0].id;
+      }
+      return null;
+    } catch (err) {
+      console.error('Failed to capture screen sources:', err);
+      return null;
+    }
+  });
 
   // Database
   ipcMain.handle('db:get-trusted', () => getTrustedDevices());
